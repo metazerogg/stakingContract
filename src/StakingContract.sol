@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity 0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -9,7 +9,7 @@ contract StakingContract is ReentrancyGuard, Ownable {
     IERC20 public basicToken;
 
     uint256 public totalStaked;
-    uint256 public totalStakedAccruingRewards;  //TODO testing if Math works out here
+    uint256 public totalStakedAccruingRewards;  
     uint256 public rewardRate;
     uint256 public lastUpdateTime;
     uint256 public rewardPerTokenStored;
@@ -34,24 +34,23 @@ contract StakingContract is ReentrancyGuard, Ownable {
     event Unstaked(address indexed user, uint256 amount);
     event RewardPaid(address indexed user, uint256 reward);
     event EmissionsUpdated(uint256 newEmissionEnd);
+    event UnstakeFeePercentUpdated(uint256 newFeePercent);
+    event UnstakeTimeLockUpdated(uint256 newTimeLock);
 
     modifier updateReward(address account) {
         rewardPerTokenStored = rewardPerToken();
         lastUpdateTime = lastApplicableTime();
-        if (stakers[account].unstakeInitTime == 0 ) {
-            stakers[account].rewards = earned(account);
-            stakers[account].rewardDebt = rewardPerTokenStored;
+        Staker storage staker = stakers[account];
+        if (staker.unstakeInitTime == 0 ) {
+            staker.rewards = earned(account);
+            staker.rewardDebt = rewardPerTokenStored;
         }
         
-        if (stakers[account].unstakeInitTime != 0 ) {
-
-            if (stakers[account].claimedAfterUnstake == true) {
-                stakers[account].rewards = 0;
-                }
-                // else if (stakers[account].claimedAfterUnstake != false)
-                // do nothing
-                //stakers[account].rewards = stakers[account].rewards;
+        if (staker.claimedAfterUnstake == true) {
+            staker.rewards = 0;
             }
+        // else if (staker.claimedAfterUnstake != false && staker.unstakeInitTIme !=0)
+        //staker.rewards = staker.rewards;
         _;
     }
 
@@ -101,7 +100,7 @@ contract StakingContract is ReentrancyGuard, Ownable {
         emit Staked(msg.sender, _amount);
     }
 
-    function initiateUnstake() external nonReentrant updateReward(msg.sender) {
+    function initiateUnstake() external updateReward(msg.sender) {
         Staker storage staker = stakers[msg.sender];
         require(staker.amountStaked > 0, "No tokens staked");
         require(staker.unstakeInitTime == 0, "Unstake already initiated");
@@ -152,11 +151,13 @@ contract StakingContract is ReentrancyGuard, Ownable {
     function setUnstakeFeePercent(uint256 _newFee) external onlyOwner {
         require(_newFee <= 200, "Unstake fee exceeds 2%, maximum allowed"); // Assuming basis points
         unstakeFeePercent = _newFee;
+        emit UnstakeFeePercentUpdated(_newFee); 
     }
 
     function setUnstakeTimeLock(uint256 _newTimeLock) external onlyOwner {
         require(_newTimeLock <= 15 days, "Time lock must be between 0 to 15 days");
         unstakeTimeLock = _newTimeLock;
+        emit UnstakeTimeLockUpdated(_newTimeLock);
     }
 
     function getRemainingUnstakeTime(address _staker) external view returns (uint256) {
@@ -178,18 +179,6 @@ contract StakingContract is ReentrancyGuard, Ownable {
         require(amount <= feesAccrued, "Amount exceeds accrued fees");
         feesAccrued -= amount;
         require(basicToken.transfer(msg.sender, amount), "Fee withdrawal failed");
-    }
-
-    function retrieveLockedTokens(
-        address tokenAddress, 
-        uint256 amount
-    ) external onlyOwner {
-
-        require(amount > 0, "Amount must be greater than zero");
-        IERC20 token = IERC20(tokenAddress);
-        require(token.balanceOf(address(this)) >= amount, "Insufficient token balance in contract");
-        
-        require(token.transfer(msg.sender, amount), "Token transfer failed");
     }
 
 }
