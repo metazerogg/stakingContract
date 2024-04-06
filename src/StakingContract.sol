@@ -24,7 +24,6 @@ contract StakingContract is ReentrancyGuard, Ownable {
         uint256 rewardDebt;
         uint256 rewards;
         uint256 unstakeInitTime; 
-        bool claimedAfterUnstake; 
     }
 
     mapping(address => Staker) public stakers;
@@ -46,10 +45,7 @@ contract StakingContract is ReentrancyGuard, Ownable {
             staker.rewardDebt = rewardPerTokenStored;
         }
         
-        if (staker.claimedAfterUnstake == true) {
-            staker.rewards = 0;
-            }
-        // else if (staker.claimedAfterUnstake != false && staker.unstakeInitTIme !=0)
+        // else if (staker.unstakeInitTIme !=0)
         //staker.rewards = staker.rewards;
         _;
     }
@@ -76,9 +72,6 @@ contract StakingContract is ReentrancyGuard, Ownable {
 
     function earned(address account) public view returns (uint256) {
         Staker storage staker = stakers[account];
-        if (staker.claimedAfterUnstake == true) {
-                return 0;
-        }
         if (staker.unstakeInitTime != 0) {
                 return staker.rewards;
         }
@@ -138,12 +131,10 @@ contract StakingContract is ReentrancyGuard, Ownable {
     }
 
     function claimReward() external nonReentrant updateReward(msg.sender) {
-        uint256 reward = stakers[msg.sender].rewards;
+        Staker storage staker = stakers[msg.sender];
+        uint256 reward = staker.rewards;
         require(reward > 0, "No rewards to claim");
-        stakers[msg.sender].rewards = 0;
-        if (stakers[msg.sender].unstakeInitTime != 0){
-            stakers[msg.sender].claimedAfterUnstake = true;
-        }
+        staker.rewards = 0;
         require(basicToken.transfer(msg.sender, reward), "Reward transfer failed");
         emit RewardPaid(msg.sender, reward);
     }
