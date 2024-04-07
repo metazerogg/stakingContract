@@ -18,6 +18,7 @@ contract StakingContract is ReentrancyGuard, Ownable {
     uint256 public emissionStart;
     uint256 public emissionEnd;
     uint256 public feesAccrued;
+    uint256 public pendingRewardsStored;
     
     uint256 private constant MAX_FEE = 200;
     uint256 private constant BASIS_POINTS = 10000;
@@ -41,6 +42,7 @@ contract StakingContract is ReentrancyGuard, Ownable {
 
     modifier updateReward(address account) {
         rewardPerTokenStored = rewardPerToken();
+        pendingRewardsStored = pendingRewards();
         lastUpdateTime = lastApplicableTime();
         Staker storage staker = stakers[account];
         if (staker.unstakeInitTime == 0 ) {
@@ -64,7 +66,13 @@ contract StakingContract is ReentrancyGuard, Ownable {
         return block.timestamp < emissionEnd ? block.timestamp : emissionEnd;
     }
 
-
+    function pendingRewards() public view returns (uint256) {
+        uint256 totalStakedAccruingRewardsCached = totalStakedAccruingRewards;
+        if (totalStakedAccruingRewardsCached == 0) return pendingRewardsStored;
+        uint256 fullPendingRewards = (lastApplicableTime() - lastUpdateTime) * rewardRate;
+        uint256 realPendingRewards = fullPendingRewards*1e18/totalStakedAccruingRewardsCached*totalStakedAccruingRewardsCached/1e18;
+        return pendingRewardsStored + realPendingRewards;
+    }
     function rewardPerToken() public view returns (uint256) {
         if (totalStakedAccruingRewards == 0) {
             return rewardPerTokenStored;
@@ -130,6 +138,7 @@ contract StakingContract is ReentrancyGuard, Ownable {
         uint256 totalAmount = amountAfterFee;
         // If there are rewards, combine them with the staked amount after fees for a single transfer
         if (reward > 0 && availableForRewards >= reward) {
+            pendingRewardsStored -= reward;
             totalAmount += reward;
             staker.rewards = 0;
             emit RewardPaid(msg.sender, reward);
@@ -147,6 +156,7 @@ contract StakingContract is ReentrancyGuard, Ownable {
         uint256 availableForRewards = _getFreeContractBalance();
         require(availableForRewards >= reward, "Insufficient funds for reward");
 
+        pendingRewardsStored -= reward;
         staker.rewards = 0;
         require(basicToken.transfer(msg.sender, reward), "Reward transfer failed");
         emit RewardPaid(msg.sender, reward);
@@ -179,8 +189,15 @@ contract StakingContract is ReentrancyGuard, Ownable {
         require(basicToken.transfer(msg.sender, amount), "Fee withdrawal failed");
     }
 
+    function withdrawRemainingTokens() external updateReward(address(0)) onlyOwner {
+        require(block.timestamp > emissionEnd, "Cannot withdraw before emission end");
+        uint256 remainingBalance = _getFreeContractBalance() - pendingRewards();
+        require(remainingBalance > 0, "No remaining balance");
+        require(basicToken.transfer(msg.sender, remainingBalance), "Token withdrawal failed");
+    }
+
+
     function _getFreeContractBalance() internal view returns (uint256) {
         return basicToken.balanceOf(address(this)) - totalStaked - feesAccrued;
     }
-
 }
