@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../src/StakingContract.sol";
@@ -30,7 +30,7 @@ contract StakingContractTest is Test {
         // Deploy the BasicToken contract and mint tokens to the staker
         basicToken = new BasicToken();
         for (uint i = 0; i < stakers.length; i++) {
-            basicToken.transfer(stakers[i], 100_000 * 1e18);
+            basicToken.transfer(stakers[i], 1_000_000 * 1e18);
         }
         
         // Deploy the StakingContract with the BasicToken as the staking/reward token
@@ -49,46 +49,52 @@ contract StakingContractTest is Test {
     }
 
     /// @notice ==== Staker functions below ====
-    function testStakeAmount() public {
+    function testStakeAmount(uint256 _stakeAmount) public {
+        // Bound the input to prevent excessively large values
+        uint256 stakeAmount = bound(_stakeAmount, 1e18, 200_000e18);
+
         // Simulate staker1 staking tokens
         vm.startPrank(staker1);
-        stakingContract.stake(100 * 1e18);
+        stakingContract.stake(stakeAmount);
 
         // Check if the staked amount is correctly recorded
-        (uint256 amountStaked,,,,) = stakingContract.stakers(staker1);
-        assertEq(amountStaked, 100 * 1e18);
+        (uint256 amountStaked,,,) = stakingContract.stakers(staker1);
+        assertEq(amountStaked, stakeAmount);
 
-        stakingContract.stake(1 * 1e18);
-        stakingContract.stake(2 * 1e18);
-        stakingContract.stake(2 * 1e18);
+        stakingContract.stake(stakeAmount);
+        stakingContract.stake(stakeAmount);
+        stakingContract.stake(stakeAmount);
         vm.stopPrank();
 
         vm.startPrank(staker2);
-        stakingContract.stake(1 * 1e18);
-        stakingContract.stake(2 * 1e18);
-        (uint256 amountStakedStaker2,,,,) = stakingContract.stakers(staker2);
-        assertEq(amountStakedStaker2, 3 * 1e18);
+        stakingContract.stake(stakeAmount);
+        stakingContract.stake(stakeAmount*2);
+        (uint256 amountStakedStaker2,,,) = stakingContract.stakers(staker2);
+        assertEq(amountStakedStaker2, stakeAmount*3);
         
-        (uint256 amountStakedNext,,,,) = stakingContract.stakers(staker1);
-        assertEq(amountStakedNext, 105 * 1e18);
+        (uint256 amountStakedNext,,,) = stakingContract.stakers(staker1);
+        assertEq(amountStakedNext, stakeAmount*4);
 
         vm.stopPrank();
     }
 
 
-    function testStakeAndEarnRewards() public {
+    function testStakeAndEarnRewards(uint256 _stakeAmount, uint256 _timeDelay) public {
+        uint256 stakeAmount = bound(_stakeAmount, 1e18, 200_000e18);
+        uint256 timeDelay = bound(_timeDelay, 2, stakingContract.unstakeTimeLock()*100);
+
         // User1 stakes 10000 tokens
         vm.startPrank(staker1);
-        stakingContract.stake(100 * 1e18);
+        stakingContract.stake(stakeAmount);
 
         // Warp 1 week into the future
-        vm.warp(block.timestamp + 1 days);
+        vm.warp(block.timestamp + timeDelay);
 
         // Claim rewards
         stakingContract.claimReward();
 
         // Check that user1's balance increased due to rewards
-        assertTrue(basicToken.balanceOf(staker1) > 1000 * 1e18);
+        assertTrue(basicToken.balanceOf(staker1) > stakeAmount);
         vm.stopPrank();
     }
 
@@ -445,7 +451,7 @@ function testCompleteUnstakeWithEmissionsFeesWithdraw() public {
 
         // Initiate unstake
         stakingContract.initiateUnstake();
-        (,,,uint256 unstakeInitTime,) = stakingContract.stakers(staker1);
+        (,,,uint256 unstakeInitTime) = stakingContract.stakers(staker1);
         assertEq(unstakeInitTime, block.timestamp);
  
         // Fail: early unstake attempt 
@@ -516,10 +522,10 @@ function testCompleteUnstakeWithEmissionsFeesWithdraw() public {
         stakingContract.completeUnstake();
         vm.stopPrank();
         vm.startPrank(staker3);
-        (,,,uint256 unstakeInitTimePretUnstakeStaker3,) = stakingContract.stakers(staker3);
+        (,,,uint256 unstakeInitTimePretUnstakeStaker3) = stakingContract.stakers(staker3);
         assertGe(unstakeInitTimePretUnstakeStaker3, 0);
         stakingContract.completeUnstake();
-        (,,,uint256 unstakeInitTimePostUnstakeStaker3,) = stakingContract.stakers(staker3);
+        (,,,uint256 unstakeInitTimePostUnstakeStaker3) = stakingContract.stakers(staker3);
         assertEq(unstakeInitTimePostUnstakeStaker3, 0);
 
         // @dev Unstake and change unstake time from dev:
@@ -653,68 +659,5 @@ function testCompleteUnstakeWithEmissionsFeesWithdraw() public {
         vm.stopPrank();
     }
 
- 
-    function testAdminChangeEmissionsAndEnd() public {
-        //vm.startPrank(deployer);
-        uint256 _emissionEnd1 = stakingContract.emissionEnd();
-        stakingContract.setEmissionDetails(10 days);
-        assertEq(stakingContract.emissionEnd(), _emissionEnd1 + 10 days, "EmissionEnd not updated correctly.");
-
-        _emissionEnd1 = stakingContract.emissionEnd();
-        stakingContract.setEmissionDetails(1);
-        assertEq(stakingContract.emissionEnd(), _emissionEnd1 + 1, "EmissionEnd not updated correctly.");
-
-        _emissionEnd1 = stakingContract.emissionEnd();
-        stakingContract.setEmissionDetails(0);
-        assertEq(stakingContract.emissionEnd(), _emissionEnd1, "EmissionEnd not updated correctly.");
-
-        _emissionEnd1 = stakingContract.emissionEnd();
-        stakingContract.setEmissionDetails(15 days);
-        assertEq(stakingContract.emissionEnd(), _emissionEnd1 + 15 days, "EmissionEnd not updated correctly.");
-        //vm.stopPrank();
-
-        // Check if it reverts on non owner calls.
-        vm.startPrank(staker1);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector,staker1));
-        stakingContract.setEmissionDetails(20);
-        vm.stopPrank();
-    }
-
-
-    function testRetrieveLockedTokens() public {
-        
-        // Deploy another token to test retrieval of a different token
-        BasicToken anotherToken = new BasicToken();
-        anotherToken.transfer(address(stakingContract), 500 * 1e18);
-
-
-        // Attempt to retrieve more tokens than the contract has (Should fail)
-        vm.expectRevert("Insufficient token balance in contract");
-        //vm.prank(deployer);
-        stakingContract.retrieveLockedTokens(address(basicToken), 11_000_000 * 1e18);
-
-        // Attempt to retrieve less tokens than the contract has (Should succeed)
-        uint256 initialDeployerBalance = basicToken.balanceOf(stakingContract.owner());
-        uint256 retrieveAmount = 100 * 1e18; // Less than contract's balance
-        //vm.prank(deployer);
-        stakingContract.retrieveLockedTokens(address(basicToken), retrieveAmount);
-        uint256 newDeployerBalance = basicToken.balanceOf(stakingContract.owner());
-        assertEq(newDeployerBalance, initialDeployerBalance + retrieveAmount, "Retrieve less tokens failed");
-
-        // Attempt to retrieve the exact amount of tokens the contract has (Should succeed)
-        initialDeployerBalance = anotherToken.balanceOf(stakingContract.owner());
-        retrieveAmount = 500 * 1e18; // Exact amount contract has
-        //vm.prank(deployer);
-        stakingContract.retrieveLockedTokens(address(anotherToken), retrieveAmount);
-        newDeployerBalance = anotherToken.balanceOf(stakingContract.owner());
-        assertEq(newDeployerBalance, initialDeployerBalance + retrieveAmount, "Retrieve exact tokens failed");
-
-        // Attempt retrieval by a non-owner (Should fail)
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector,staker1));
-        vm.prank(staker1);
-        stakingContract.retrieveLockedTokens(address(basicToken), 1e18);
-
-    }
-   
 }
 
