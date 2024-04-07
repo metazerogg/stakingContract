@@ -119,25 +119,22 @@ contract StakingContract is ReentrancyGuard, Ownable {
         uint256 fee = amount * unstakeFeePercent / BASIS_POINTS;
         uint256 amountAfterFee = amount - fee;
 
+        uint256 availableForRewards = _getFreeContractBalance();
+
         feesAccrued += fee;
         totalStaked -= amount;
-        delete stakers[msg.sender]; // Reset rewards and all information here
-        
+        staker.amountStaked = 0;
+        staker.rewardDebt = 0;
+        staker.unstakeInitTime = 0;
+
+        uint256 totalAmount = amountAfterFee;
         // If there are rewards, combine them with the staked amount after fees for a single transfer
-        if (reward > 0) {
-            // Calculate the available balance for rewards
-            uint256 contractBalance = basicToken.balanceOf(address(this));
-            uint256 availableForRewards = contractBalance - totalStaked;
-            require(availableForRewards >= reward, "Insufficient funds for reward");
-
-            uint256 totalAmount = amountAfterFee + reward;
-            require(basicToken.transfer(msg.sender, totalAmount), "Transfer failed");
+        if (reward > 0 && availableForRewards >= reward) {
+            totalAmount += reward;
+            staker.rewards = 0;
             emit RewardPaid(msg.sender, reward);
-        } else {
-            // If there are no rewards, just transfer the staked amount after fees
-            require(basicToken.transfer(msg.sender, amountAfterFee), "Unstake transfer failed");
         }
-
+        require(basicToken.transfer(msg.sender, totalAmount), "Unstake transfer failed");
         emit Unstaked(msg.sender, amount);
     }
 
@@ -147,8 +144,7 @@ contract StakingContract is ReentrancyGuard, Ownable {
         require(reward > 0, "No rewards to claim");
 
         // Calculate the available balance for rewards
-        uint256 contractBalance = basicToken.balanceOf(address(this));
-        uint256 availableForRewards = contractBalance - totalStaked;
+        uint256 availableForRewards = _getFreeContractBalance();
         require(availableForRewards >= reward, "Insufficient funds for reward");
 
         staker.rewards = 0;
@@ -181,6 +177,10 @@ contract StakingContract is ReentrancyGuard, Ownable {
         require(amount <= feesAccrued, "Amount exceeds accrued fees");
         feesAccrued -= amount;
         require(basicToken.transfer(msg.sender, amount), "Fee withdrawal failed");
+    }
+
+    function _getFreeContractBalance() internal view returns (uint256) {
+        return basicToken.balanceOf(address(this)) - totalStaked - feesAccrued;
     }
 
 }
