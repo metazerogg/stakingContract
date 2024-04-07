@@ -857,5 +857,101 @@ function testCompleteUnstakeWithEmissionsFeesWithdraw() public {
         stakingContract.withdrawRemainingTokens();
         assertLt(basicToken.balanceOf(address(stakingContract)), 100);
     }
-}
 
+    function testStakeAndEarnRewards_NoTokensStuckInContract(uint256 _stakeAmount, uint256 _timeDelay) public {
+        uint256 stakeAmount = bound(_stakeAmount, 1e18, 200_000e18);
+        uint256 timeDelay = bound(_timeDelay, 6, 30 days);
+
+        // User1 stakes 10000 tokens
+        vm.prank(staker1);
+        stakingContract.stake(stakeAmount/2);
+
+        // Warp 1 week into the future
+        skip(timeDelay / 3);
+        
+        vm.prank(staker2);
+        stakingContract.stake(stakeAmount/2);
+
+        // Check that user1's balance increased due to rewards
+        assertTrue(basicToken.balanceOf(staker1) > stakeAmount);
+
+        // Warp 1 week into the future
+        skip(2*timeDelay / 3);
+
+        // Claim rewards
+        vm.prank(staker1);
+        stakingContract.claimReward();
+        
+        // Check that user1's balance increased due to rewards
+        assertTrue(basicToken.balanceOf(staker1) > stakeAmount);
+
+        skip(stakingContract.emissionEnd());
+
+        vm.prank(staker1);
+        stakingContract.initiateUnstake();
+
+        vm.prank(staker2);
+        stakingContract.initiateUnstake();
+
+        skip(stakingContract.unstakeTimeLock());
+
+        vm.prank(staker1);
+        stakingContract.completeUnstake();
+
+        vm.prank(staker2);
+        stakingContract.completeUnstake();
+
+        stakingContract.withdrawFees(stakingContract.feesAccrued());
+        
+        stakingContract.withdrawRemainingTokens();
+        assertLt(basicToken.balanceOf(address(stakingContract)), 3);
+    }
+
+    function testStakeAndEarnRewards_2stakers(uint256 _stakeAmount, uint256 _timeDelay) public {
+            uint256 stakeAmount = bound(_stakeAmount, 1e18, 200_000e18);
+            uint256 timeDelay = bound(_timeDelay, 6, 30 days);
+
+
+            // User1 stakes 10000 tokens
+            vm.prank(staker1);
+            stakingContract.stake(stakeAmount/2);
+
+            // Warp 1 week into the future
+            skip(timeDelay / 3);
+
+            
+            vm.prank(staker2);
+            stakingContract.stake(stakeAmount/2);
+
+            // Warp 1 week into the future
+            skip(2*timeDelay / 3);
+
+
+            // Claim rewards
+            vm.prank(staker1);
+            stakingContract.claimReward();
+            
+            // Check that user1's balance increased due to rewards
+            assertTrue(basicToken.balanceOf(staker1) > stakeAmount);
+
+            skip(stakingContract.emissionEnd());
+            vm.prank(staker1);
+            stakingContract.initiateUnstake();
+
+            vm.prank(staker2);
+            stakingContract.initiateUnstake();
+
+            skip(stakingContract.unstakeTimeLock());
+
+            vm.prank(staker1);
+            stakingContract.completeUnstake();
+
+            vm.prank(staker2);
+            stakingContract.completeUnstake();
+
+            stakingContract.withdrawFees(stakingContract.feesAccrued());
+            
+            stakingContract.withdrawRemainingTokens();
+            assertLt(basicToken.balanceOf(address(stakingContract)), 3);
+        }
+}
