@@ -18,6 +18,10 @@ contract StakingContract is ReentrancyGuard, Ownable {
     uint256 public emissionStart;
     uint256 public emissionEnd;
     uint256 public feesAccrued;
+    
+    uint256 private constant MAX_FEE = 200;
+    uint256 private constant BASIS_POINTS = 10000;
+    uint256 private constant MAX_TIMELOCK = 15 days;
 
     struct Staker {
         uint256 amountStaked;
@@ -32,7 +36,6 @@ contract StakingContract is ReentrancyGuard, Ownable {
     event Staked(address indexed user, uint256 amount);
     event Unstaked(address indexed user, uint256 amount);
     event RewardPaid(address indexed user, uint256 reward);
-    event EmissionsUpdated(uint256 newEmissionEnd);
     event UnstakeFeePercentUpdated(uint256 newFeePercent);
     event UnstakeTimeLockUpdated(uint256 newTimeLock);
 
@@ -61,6 +64,7 @@ contract StakingContract is ReentrancyGuard, Ownable {
         return block.timestamp < emissionEnd ? block.timestamp : emissionEnd;
     }
 
+
     function rewardPerToken() public view returns (uint256) {
         if (totalStakedAccruingRewards == 0) {
             return rewardPerTokenStored;
@@ -84,6 +88,8 @@ contract StakingContract is ReentrancyGuard, Ownable {
 
     function stake(uint256 _amount) external nonReentrant updateReward(msg.sender) {
         require(_amount > 0, "Cannot stake 0");
+        require(block.timestamp >= emissionStart, "Staking not yet started");
+        require(block.timestamp <= emissionEnd, "Staking period has ended");
         Staker storage staker = stakers[msg.sender];
         require(staker.unstakeInitTime == 0, "Cannot stake after initiating unstake.");
         totalStaked += _amount;
@@ -110,14 +116,20 @@ contract StakingContract is ReentrancyGuard, Ownable {
 
         uint256 amount = staker.amountStaked;
         uint256 reward = staker.rewards;
-        uint256 fee = amount * unstakeFeePercent / 10000;
+        uint256 fee = amount * unstakeFeePercent / BASIS_POINTS;
         uint256 amountAfterFee = amount - fee;
 
         feesAccrued += fee;
         totalStaked -= amount;
+        delete stakers[msg.sender]; // Reset rewards and all information here
         
         // If there are rewards, combine them with the staked amount after fees for a single transfer
         if (reward > 0) {
+            // Calculate the available balance for rewards
+            uint256 contractBalance = basicToken.balanceOf(address(this));
+            uint256 availableForRewards = contractBalance - totalStaked;
+            require(availableForRewards >= reward, "Insufficient funds for reward");
+
             uint256 totalAmount = amountAfterFee + reward;
             require(basicToken.transfer(msg.sender, totalAmount), "Transfer failed");
             emit RewardPaid(msg.sender, reward);
@@ -126,7 +138,6 @@ contract StakingContract is ReentrancyGuard, Ownable {
             require(basicToken.transfer(msg.sender, amountAfterFee), "Unstake transfer failed");
         }
 
-        delete stakers[msg.sender]; // Reset rewards and all information here
         emit Unstaked(msg.sender, amount);
     }
 
@@ -134,19 +145,25 @@ contract StakingContract is ReentrancyGuard, Ownable {
         Staker storage staker = stakers[msg.sender];
         uint256 reward = staker.rewards;
         require(reward > 0, "No rewards to claim");
+
+        // Calculate the available balance for rewards
+        uint256 contractBalance = basicToken.balanceOf(address(this));
+        uint256 availableForRewards = contractBalance - totalStaked;
+        require(availableForRewards >= reward, "Insufficient funds for reward");
+
         staker.rewards = 0;
         require(basicToken.transfer(msg.sender, reward), "Reward transfer failed");
         emit RewardPaid(msg.sender, reward);
     }
 
     function setUnstakeFeePercent(uint256 _newFee) external onlyOwner {
-        require(_newFee <= 200, "Unstake fee exceeds 2%, maximum allowed"); // Assuming basis points
+        require(_newFee <= MAX_FEE, "Unstake fee exceeds 2%, maximum allowed"); 
         unstakeFeePercent = _newFee;
         emit UnstakeFeePercentUpdated(_newFee); 
     }
 
     function setUnstakeTimeLock(uint256 _newTimeLock) external onlyOwner {
-        require(_newTimeLock <= 15 days, "Time lock must be between 0 to 15 days");
+        require(_newTimeLock <= MAX_TIMELOCK, "Time lock must be between 0 to 15 days");
         unstakeTimeLock = _newTimeLock;
         emit UnstakeTimeLockUpdated(_newTimeLock);
     }
@@ -158,12 +175,6 @@ contract StakingContract is ReentrancyGuard, Ownable {
         } else {
             return 0;
         }
-    }
-
-    // Allow owner to update emission enddate
-    function setEmissionDetails(uint256 _emissionDuration) external onlyOwner {
-        emissionEnd = emissionEnd + _emissionDuration; //extends the duration. Does not reduce it
-        emit EmissionsUpdated(emissionEnd);
     }
 
     function withdrawFees(uint256 amount) external onlyOwner {
