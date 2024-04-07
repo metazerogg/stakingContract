@@ -659,5 +659,203 @@ function testCompleteUnstakeWithEmissionsFeesWithdraw() public {
         vm.stopPrank();
     }
 
+    function test_complete_unstake() public {
+        vm.prank(staker1);
+        stakingContract.stake(400e18);
+
+        vm.prank(staker2);
+        stakingContract.stake(500e18);
+
+        vm.expectRevert("Cannot withdraw before emission end");
+        stakingContract.withdrawRemainingTokens();
+
+        skip(stakingContract.emissionEnd()/2);
+
+        uint256 prevBalance = basicToken.balanceOf(staker1);
+        vm.prank(staker1);
+        stakingContract.claimReward();
+        assertGt(basicToken.balanceOf(staker1), prevBalance, "staker[0] balance should be greater than previous balance");
+
+        prevBalance = basicToken.balanceOf(staker2);
+        vm.prank(staker2);
+        stakingContract.claimReward();
+        assertGt(basicToken.balanceOf(staker2), prevBalance, "staker[1] balance should be greater than previous balance");
+
+        skip(stakingContract.emissionEnd()/2);
+
+        vm.prank(staker1);
+        stakingContract.initiateUnstake();
+
+        vm.prank(staker2);
+        stakingContract.initiateUnstake();
+
+        skip(stakingContract.unstakeTimeLock());
+
+        vm.prank(staker1);
+        stakingContract.completeUnstake();
+
+        vm.prank(staker2);
+        stakingContract.completeUnstake();
+
+        assertGt(basicToken.balanceOf(staker1), 400e18, "staker[0] balance should be 400e18");
+        assertGt(basicToken.balanceOf(staker2), 500e18, "staker[1] balance should be 500e18");
+
+        stakingContract.withdrawFees(stakingContract.feesAccrued());
+
+        stakingContract.withdrawRemainingTokens();
+
+        // 100 as there may be some rounding error
+        assertLt(basicToken.balanceOf(address(stakingContract)), 100);
+
+        // increase balance and withdraw again
+        deal(address(basicToken), address(stakingContract), 1000e18);
+        stakingContract.withdrawRemainingTokens();
+        assertLt(basicToken.balanceOf(address(stakingContract)), 100);
+    }
+
+    function test_notEnoughRewardsToken() public {
+        deal(address(basicToken), address(stakingContract), 1000e18);
+        deal(address(basicToken), staker1, 400e18);
+        deal(address(basicToken), staker2, 500e18);
+
+        vm.prank(staker1);
+        stakingContract.stake(400e18);
+
+        vm.prank(staker2);
+        stakingContract.stake(500e18);
+
+        skip(stakingContract.emissionEnd()/2);
+
+        vm.prank(staker1);
+        vm.expectRevert("Insufficient funds for reward");
+        stakingContract.claimReward();
+
+        vm.prank(staker2);
+        vm.expectRevert("Insufficient funds for reward");
+        stakingContract.claimReward();
+
+        vm.prank(staker1);
+        stakingContract.initiateUnstake();
+
+        skip(stakingContract.unstakeTimeLock());
+
+        vm.prank(staker1);
+        stakingContract.completeUnstake();
+        assertEq(basicToken.balanceOf(staker1), 400e18, "staker[0] should have 400e18");
+
+        skip(stakingContract.emissionEnd()/2);
+
+        vm.prank(staker2);
+        stakingContract.initiateUnstake();
+
+        skip(stakingContract.unstakeTimeLock());
+
+        vm.prank(staker1);
+        vm.expectRevert("Insufficient funds for reward");
+        stakingContract.claimReward();
+
+        vm.prank(staker2);
+        vm.expectRevert("Insufficient funds for reward");
+        stakingContract.claimReward();
+
+        vm.prank(staker2);
+        stakingContract.completeUnstake();
+        assertEq(basicToken.balanceOf(staker2), 500e18, "staker[0] should have 400e18");
+
+        vm.prank(staker1);
+        vm.expectRevert("Insufficient funds for reward");
+        stakingContract.claimReward();
+
+        vm.prank(staker2);
+        vm.expectRevert("Insufficient funds for reward");
+        stakingContract.claimReward();
+
+        stakingContract.withdrawFees(stakingContract.feesAccrued());
+
+        vm.prank(staker1);
+        vm.expectRevert("Insufficient funds for reward");
+        stakingContract.claimReward();
+
+        vm.prank(staker2);
+        vm.expectRevert("Insufficient funds for reward");
+        stakingContract.claimReward();
+
+        // not enough tokens
+        vm.expectRevert("No remaining tokens to withdraw");
+        stakingContract.withdrawRemainingTokens();
+
+        // increase balance and withdraw again
+        deal(address(basicToken), address(stakingContract), 10_000_000 * 1e18);
+
+        vm.prank(staker1);
+        stakingContract.claimReward();
+        assertGt(basicToken.balanceOf(staker1), 400e18, "staker[0] should have more than 400e18");
+
+        vm.prank(staker2);
+        stakingContract.claimReward();
+        assertGt(basicToken.balanceOf(staker2), 500e18, "staker[1] should have more than 500e18");
+
+        stakingContract.withdrawRemainingTokens();
+        assertLt(basicToken.balanceOf(address(stakingContract)), 100);
+
+        vm.expectRevert("No remaining tokens to withdraw");
+        stakingContract.withdrawRemainingTokens();        
+    }
+
+    function test_canStakeAfterUnstaking_rewardsMatch() public {
+        stakingContract.setUnstakeFeePercent(200);
+        deal(address(basicToken), address(stakingContract), 0);
+        deal(address(basicToken), staker1, 400e18);
+
+        vm.prank(staker1);
+        stakingContract.stake(400e18);   
+
+        skip(stakingContract.emissionEnd()/4);
+
+        vm.prank(staker1);
+        stakingContract.initiateUnstake();
+
+        skip(stakingContract.unstakeTimeLock());
+
+        vm.prank(staker1);
+        stakingContract.completeUnstake();
+        assertEq(basicToken.balanceOf(staker1), 392e18, "staker[0] should have 400e18 - fees");
+        (,,uint256 rewards,) = stakingContract.stakers(staker1);
+        assertGt(rewards, 0, "staker[0] should have pending rewards");
+
+        vm.prank(staker1);
+        stakingContract.stake(392e18);
+
+        skip(stakingContract.emissionEnd()/4);
+
+        vm.prank(staker1);
+        stakingContract.initiateUnstake();
+
+        skip(stakingContract.unstakeTimeLock());
+
+        vm.prank(staker1);
+        stakingContract.completeUnstake();
+
+        (,,uint256 newRewards,) = stakingContract.stakers(staker1);
+
+        console.log(stakingContract.pendingRewards());
+        console.log(newRewards);
+
+        assertEq(basicToken.balanceOf(staker1), 392e18 - 392e18*200/10000, "staker[0] should have 400e18 - fees");
+
+        deal(address(basicToken), address(stakingContract), 10_000_000 * 1e18);
+
+        vm.prank(staker1);
+        stakingContract.claimReward();
+
+        assertGt(basicToken.balanceOf(staker1), 392e18 - 392e18*200/10000 + rewards, "staker[0] should have more than 400e18 -fees + rewards");
+
+        skip(stakingContract.emissionEnd() + 1 days - block.timestamp);
+
+        stakingContract.withdrawFees(stakingContract.feesAccrued());
+
+        stakingContract.withdrawRemainingTokens();
+        assertLt(basicToken.balanceOf(address(stakingContract)), 100);
+    }
 }
 
