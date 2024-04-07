@@ -191,11 +191,12 @@ contract StakingContract is ReentrancyGuard, Ownable {
 
     function withdrawRemainingTokens() external updateReward(address(0)) onlyOwner {
         require(block.timestamp > emissionEnd, "Cannot withdraw before emission end");
-        uint256 remainingBalance = _getFreeContractBalance() - pendingRewards();
-        require(remainingBalance > 0, "No remaining balance");
+        uint256 freeContractBalanceCached = _getFreeContractBalance();
+        uint256 pendingRewardsCached = pendingRewards();
+        require(freeContractBalanceCached > pendingRewardsCached, "No remaining tokens to withdraw");
+        uint256 remainingBalance = freeContractBalanceCached - pendingRewardsCached;
         require(basicToken.transfer(msg.sender, remainingBalance), "Token withdrawal failed");
     }
-
 
     function _getFreeContractBalance() internal view returns (uint256) {
         return basicToken.balanceOf(address(this)) - totalStaked - feesAccrued;
